@@ -44,19 +44,21 @@ internal sealed partial class ObjectTable<TObject>
 
     private void HandleSortRequested(Column column)
     {
+        string? sortColumnDefName = column.Def.defName;
+        int sortDirection;
         if (_sortColumn != column)
         {
-            _sortColumn = column;
-            _sortDirection = SortDirectionDescending;
+            sortDirection = SortDirectionDescending;
         }
         else
         {
-            _sortDirection = _sortDirection == SortDirectionDescending
+            sortDirection = _sortDirection == SortDirectionDescending
                 ? SortDirectionAscending
                 : SortDirectionDescending;
         }
 
-        SortRows();
-        ApplyFilters();
+        QueueCurrentConfiguration(TableIntent.SetSort(
+            sortColumnDefName,
+            sortDirection == SortDirectionAscending ? SortDirection.Ascending : SortDirection.Descending));
     }
 }

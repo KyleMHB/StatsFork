@@ -8,6 +8,11 @@ internal sealed partial class ObjectTable<TObject>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void PinRow(int index)
     {
+        if (TryDeferWhileDrawing(() => PinRow(index)))
+        {
+            return;
+        }
+
         List<int> rows = _rows;
         int row = rows[index];
         MoveRowToPinnedBlock(rows, index);
@@ -15,11 +20,17 @@ internal sealed partial class ObjectTable<TObject>
         _topRowsCount++;
         SortRows();
         ApplyFilters();
+        _tableSession.Queue(TableIntent.MarkRowsDirty());
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void UnpinRow(int index)
     {
+        if (TryDeferWhileDrawing(() => UnpinRow(index)))
+        {
+            return;
+        }
+
         List<int> rows = _rows;
         int row = rows[index];
         MoveRowToUnpinnedBlock(rows, index);
@@ -27,6 +38,7 @@ internal sealed partial class ObjectTable<TObject>
         _topRowsCount--;
         SortRows();
         ApplyFilters();
+        _tableSession.Queue(TableIntent.MarkRowsDirty());
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

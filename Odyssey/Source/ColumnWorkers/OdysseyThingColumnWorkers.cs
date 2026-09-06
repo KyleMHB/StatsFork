@@ -17,10 +17,10 @@ public abstract class OdysseyThingTextColumnWorker(ColumnDef columnDef) : Column
 
     protected override TextCell MakeCell(DefBasedObject @object)
     {
-        return @object.Def is ThingDef thingDef ? new TextCell(GetText(thingDef)) : default;
+        return @object.Def is ThingDef thingDef ? new TextCell(GetText(OdysseyProjection.Current.ProjectThing(thingDef))) : default;
     }
 
-    protected abstract string? GetText(ThingDef thingDef);
+    protected abstract string? GetText(OdysseyThingProjection projection);
 
     public override ICollection<CellField> GetCellFields(TableWorker tableWorker)
     {
@@ -63,82 +63,83 @@ public abstract class OdysseyThingNumberColumnWorker(ColumnDef columnDef, string
 
     protected override NumberCell MakeCell(DefBasedObject @object)
     {
-        return @object.Def is ThingDef thingDef && TryGetValue(thingDef, out decimal value)
+        return @object.Def is ThingDef thingDef && TryGetValue(OdysseyProjection.Current.ProjectThing(thingDef), out decimal value)
             ? new NumberCell(value, formatString)
             : default;
     }
 
-    protected abstract bool TryGetValue(ThingDef thingDef, out decimal value);
+    protected abstract bool TryGetValue(OdysseyThingProjection projection, out decimal value);
 }
 
 public sealed class OdysseyThingDescriptionColumnWorker(ColumnDef columnDef) : OdysseyThingTextColumnWorker(columnDef)
 {
-    protected override string? GetText(ThingDef thingDef)
+    protected override string? GetText(OdysseyThingProjection projection)
     {
-        return thingDef.description;
+        return projection.Description;
     }
 }
 
 public sealed class BookOutcomesColumnWorker(ColumnDef columnDef) : OdysseyThingTextColumnWorker(columnDef)
 {
-    protected override string? GetText(ThingDef thingDef)
+    protected override string? GetText(OdysseyThingProjection projection)
     {
-        IEnumerable<object> doers = OdysseyReflection.GetCompValues(thingDef, "CompProperties_Book", "doers");
-        string[] labels = doers
-            .Select(doer => OdysseyReflection.ValueToString(OdysseyReflection.GetMemberValue(doer, "label"))
-                ?? OdysseyReflection.ValueToString(OdysseyReflection.GetMemberValue(doer, "outcomeDoer"))
-                ?? doer.GetType().Name)
-            .Where(label => label.NullOrEmpty() == false)
-            .Distinct()
-            .ToArray();
-
-        return labels.Length == 0 ? null : string.Join(", ", labels);
+        return projection.BookOutcomes.Count == 0 ? null : string.Join(", ", projection.BookOutcomes);
     }
 }
 
 public sealed class FishCategoriesColumnWorker(ColumnDef columnDef) : OdysseyThingTextColumnWorker(columnDef)
 {
-    protected override string? GetText(ThingDef thingDef)
+    protected override string? GetText(OdysseyThingProjection projection)
     {
-        string[] categories = thingDef.thingCategories?
-            .Select(category => category.LabelCap.RawText)
-            .Where(label => label.NullOrEmpty() == false)
-            .ToArray() ?? [];
-
-        return categories.Length == 0 ? null : string.Join(", ", categories);
+        return projection.FishCategories.Count == 0 ? null : string.Join(", ", projection.FishCategories);
     }
 }
 
 public sealed class GravshipComponentTypeColumnWorker(ColumnDef columnDef) : OdysseyThingTextColumnWorker(columnDef)
 {
-    protected override string? GetText(ThingDef thingDef)
+    protected override string? GetText(OdysseyThingProjection projection)
     {
-        return OdysseyReflection.ValueToString(OdysseyReflection.GetGravshipCompMemberValue(thingDef, "componentTypeDef"));
+        return projection.Gravship.ComponentType;
     }
 }
 
 public sealed class GravshipRangeColumnWorker(ColumnDef columnDef) : OdysseyThingNumberColumnWorker(columnDef)
 {
-    protected override bool TryGetValue(ThingDef thingDef, out decimal value)
+    protected override bool TryGetValue(OdysseyThingProjection projection, out decimal value)
     {
-        return OdysseyReflection.TryGetGravshipStatOffset(thingDef, "GravshipRange", out value);
+        if (projection.Gravship.Range.HasValue)
+        {
+            value = projection.Gravship.Range.Value;
+            return true;
+        }
+
+        value = 0m;
+        return false;
     }
 }
 
 public sealed class GravshipSubstructureSupportColumnWorker(ColumnDef columnDef) : OdysseyThingNumberColumnWorker(columnDef)
 {
-    protected override bool TryGetValue(ThingDef thingDef, out decimal value)
+    protected override bool TryGetValue(OdysseyThingProjection projection, out decimal value)
     {
-        return OdysseyReflection.TryGetGravshipStatOffset(thingDef, "SubstructureSupport", out value);
+        if (projection.Gravship.SubstructureSupport.HasValue)
+        {
+            value = projection.Gravship.SubstructureSupport.Value;
+            return true;
+        }
+
+        value = 0m;
+        return false;
     }
 }
 
 public sealed class GravshipFuelSavingsColumnWorker(ColumnDef columnDef) : OdysseyThingNumberColumnWorker(columnDef, "0.#%")
 {
-    protected override bool TryGetValue(ThingDef thingDef, out decimal value)
+    protected override bool TryGetValue(OdysseyThingProjection projection, out decimal value)
     {
-        if (OdysseyReflection.TryGetDecimal(OdysseyReflection.GetGravshipCompMemberValue(thingDef, "fuelSavingsPercent"), out value))
+        if (projection.Gravship.FuelSavings.HasValue)
         {
+            value = projection.Gravship.FuelSavings.Value;
             return true;
         }
 
@@ -149,86 +150,91 @@ public sealed class GravshipFuelSavingsColumnWorker(ColumnDef columnDef) : Odyss
 
 public sealed class GravshipMaxSimultaneousColumnWorker(ColumnDef columnDef) : OdysseyThingNumberColumnWorker(columnDef)
 {
-    protected override bool TryGetValue(ThingDef thingDef, out decimal value)
+    protected override bool TryGetValue(OdysseyThingProjection projection, out decimal value)
     {
-        return OdysseyReflection.TryGetDecimal(OdysseyReflection.GetGravshipCompMemberValue(thingDef, "maxSimultaneous"), out value);
+        if (projection.Gravship.MaxSimultaneous.HasValue)
+        {
+            value = projection.Gravship.MaxSimultaneous.Value;
+            return true;
+        }
+
+        value = 0m;
+        return false;
     }
 }
 
 public sealed class GravshipMaxDistanceColumnWorker(ColumnDef columnDef) : OdysseyThingNumberColumnWorker(columnDef)
 {
-    protected override bool TryGetValue(ThingDef thingDef, out decimal value)
+    protected override bool TryGetValue(OdysseyThingProjection projection, out decimal value)
     {
-        return OdysseyReflection.TryGetDecimal(OdysseyReflection.GetGravshipCompMemberValue(thingDef, "maxDistance"), out value);
+        if (projection.Gravship.MaxDistance.HasValue)
+        {
+            value = projection.Gravship.MaxDistance.Value;
+            return true;
+        }
+
+        value = 0m;
+        return false;
     }
 }
 
 public sealed class GravshipDirectionInfluenceColumnWorker(ColumnDef columnDef) : OdysseyThingNumberColumnWorker(columnDef)
 {
-    protected override bool TryGetValue(ThingDef thingDef, out decimal value)
+    protected override bool TryGetValue(OdysseyThingProjection projection, out decimal value)
     {
-        return OdysseyReflection.TryGetDecimal(OdysseyReflection.GetGravshipCompMemberValue(thingDef, "directionInfluence"), out value);
+        if (projection.Gravship.DirectionInfluence.HasValue)
+        {
+            value = projection.Gravship.DirectionInfluence.Value;
+            return true;
+        }
+
+        value = 0m;
+        return false;
     }
 }
 
 public sealed class OrbitalInfrastructureFunctionColumnWorker(ColumnDef columnDef) : OdysseyThingTextColumnWorker(columnDef)
 {
-    protected override string? GetText(ThingDef thingDef)
+    protected override string? GetText(OdysseyThingProjection projection)
     {
-        List<string> functions = [];
-        if (OdysseyReflection.HasCompClass(thingDef, "CompOrbitalScanner"))
-        {
-            functions.Add("Orbital scanner");
-        }
-        if (OdysseyReflection.HasComp(thingDef, "CompProperties_OxygenPusher"))
-        {
-            functions.Add("Oxygen");
-        }
-        if (thingDef.thingClass?.Name == "Building_VacBarrier")
-        {
-            functions.Add("Vac barrier");
-        }
-
-        return functions.Count == 0 ? null : string.Join(", ", functions);
+        return projection.Orbital.Functions.Count == 0 ? null : string.Join(", ", projection.Orbital.Functions);
     }
 }
 
 public sealed class OrbitalInfrastructureLowPowerFactorColumnWorker(ColumnDef columnDef) : OdysseyThingNumberColumnWorker(columnDef, "0.#%")
 {
-    protected override bool TryGetValue(ThingDef thingDef, out decimal value)
+    protected override bool TryGetValue(OdysseyThingProjection projection, out decimal value)
     {
-        return OdysseyReflection.TryGetDecimal(OdysseyReflection.GetCompMemberValue(thingDef, "CompProperties_LowPowerUnlessVacuum", "lowPowerConsumptionFactor"), out value);
+        if (projection.Orbital.LowPowerFactor.HasValue)
+        {
+            value = projection.Orbital.LowPowerFactor.Value;
+            return true;
+        }
+
+        value = 0m;
+        return false;
     }
 }
 
 public sealed class OrbitalInfrastructureAirPerSecondColumnWorker(ColumnDef columnDef) : OdysseyThingNumberColumnWorker(columnDef, "0.####")
 {
-    protected override bool TryGetValue(ThingDef thingDef, out decimal value)
+    protected override bool TryGetValue(OdysseyThingProjection projection, out decimal value)
     {
-        return OdysseyReflection.TryGetDecimal(OdysseyReflection.GetCompMemberValue(thingDef, "CompProperties_OxygenPusher", "airPerSecondPerHundredCells"), out value);
+        if (projection.Orbital.AirPerSecond.HasValue)
+        {
+            value = projection.Orbital.AirPerSecond.Value;
+            return true;
+        }
+
+        value = 0m;
+        return false;
     }
 }
 
 public sealed class UniqueWeaponTraitsColumnWorker(ColumnDef columnDef) : OdysseyThingTextColumnWorker(columnDef)
 {
-    protected override string? GetText(ThingDef thingDef)
+    protected override string? GetText(OdysseyThingProjection projection)
     {
-        object? comp = OdysseyReflection.GetComp(thingDef, "CompProperties_UniqueWeapon");
-        if (comp == null)
-        {
-            return null;
-        }
-
-        IEnumerable<object> traits = OdysseyReflection.GetEnumerableMemberValue(comp, "traits")
-            ?? OdysseyReflection.GetEnumerableMemberValue(comp, "weaponTraits")
-            ?? [];
-
-        string[] labels = traits
-            .Select(OdysseyReflection.ValueToString)
-            .Where(label => label.NullOrEmpty() == false)
-            .ToArray()!;
-
-        return labels.Length == 0 ? null : string.Join(", ", labels);
+        return projection.UniqueWeaponTraits.Count == 0 ? null : string.Join(", ", projection.UniqueWeaponTraits);
     }
 }
-

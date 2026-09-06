@@ -37,16 +37,6 @@ internal sealed partial class ObjectTable<TObject>
                 .Max(label => ButtonStyle.PadHor * 2f + label.CalcSize(ButtonStyle.LabelStyle).x);
         }
 
-        public void NotifyColumnAdded(Column column)
-        {
-            ColumnsMenu.NotifyColumnAdded(column);
-        }
-
-        public void NotifyColumnRemoved(Column column)
-        {
-            ColumnsMenu.NotifyColumnRemoved(column);
-        }
-
         public void Draw(Rect rect)
         {
             // Layout
@@ -109,6 +99,7 @@ internal sealed partial class ObjectTable<TObject>
             }
             else if (columnsMenuButtonWasClicked)
             {
+                ColumnsMenu.RefreshSelection();
                 ColumnsMenu.Open();
             }
             else if (columnPresetsButtonWasClicked)
@@ -214,7 +205,7 @@ internal sealed partial class ObjectTable<TObject>
             }
             columnsMenuOptions.SortBy(option => option.Label);
 
-            return new ColumnsFloatMenu(columnsMenuOptions);
+            return new ColumnsFloatMenu(_parent, columnsMenuOptions);
         }
 
         private FloatMenu MakePresetsMenu()
@@ -252,39 +243,30 @@ internal sealed partial class ObjectTable<TObject>
 
         private sealed class ColumnsFloatMenu : FloatMenu
         {
+            private readonly ObjectTable<TObject> _parent;
             private readonly List<ColumnsFloatMenuOption> _columnOptions;
 
-            public ColumnsFloatMenu(List<ColumnsFloatMenuOption> options) : base(options.Cast<FloatMenuOption>().ToList())
+            public ColumnsFloatMenu(ObjectTable<TObject> parent, List<ColumnsFloatMenuOption> options) : base(options.Cast<FloatMenuOption>().ToList())
             {
+                _parent = parent;
                 _columnOptions = options;
             }
 
-            public void NotifyColumnAdded(Column column)
+            public void RefreshSelection()
             {
-                ColumnDef columnDef = column.Def;
                 int optionsCount = _columnOptions.Count;
                 for (int i = 0; i < optionsCount; i++)
                 {
                     ColumnsFloatMenuOption option = _columnOptions[i];
-                    if (option.ColumnDef == columnDef)
+                    if (_parent._tableSession.Current.VisibleColumnDefNames.Contains(
+                        option.ColumnDef.defName,
+                        global::System.StringComparer.Ordinal))
                     {
                         option.Select();
-                        break;
                     }
-                }
-            }
-
-            public void NotifyColumnRemoved(Column column)
-            {
-                ColumnDef columnDef = column.Def;
-                int optionsCount = _columnOptions.Count;
-                for (int i = 0; i < optionsCount; i++)
-                {
-                    ColumnsFloatMenuOption option = _columnOptions[i];
-                    if (option.ColumnDef == columnDef)
+                    else
                     {
                         option.Unselect();
-                        break;
                     }
                 }
             }
@@ -301,7 +283,9 @@ internal sealed partial class ObjectTable<TObject>
                 tooltip = columnDef.description;
                 action = () =>
                 {
-                    if (parent._columns.Find(column => column.Def == columnDef) != null)
+                    if (parent._tableSession.Current.VisibleColumnDefNames.Contains(
+                        columnDef.defName,
+                        global::System.StringComparer.Ordinal))
                     {
                         parent.RemoveColumn(columnDef);
                     }
@@ -310,7 +294,9 @@ internal sealed partial class ObjectTable<TObject>
                         parent.AddColumn(columnDef);
                     }
                 };
-                if (parent._columns.Find(column => column.Def == columnDef) == null)
+                if (parent._tableSession.Current.VisibleColumnDefNames.Contains(
+                    columnDef.defName,
+                    global::System.StringComparer.Ordinal) == false)
                 {
                     Unselect();
                 }

@@ -19,27 +19,54 @@ internal sealed partial class ObjectTable<TObject>
 {
     private void PinColumn(int index)
     {
-        if (index != _leftColumnsCount)
+        if (index < 0 || index >= _columns.Count)
         {
-            int lastPinnedColumnIndex = _leftColumnsCount - 1;
-            _columns.MoveAfterElemAt(index, lastPinnedColumnIndex);
+            return;
         }
-        _leftColumnsCount++;
+
+        QueueColumnPinned(_columns[index].Def.defName, true);
     }
 
     private void UnpinColumn(int index)
     {
-        int lastPinnedColumnIndex = _leftColumnsCount - 1;
-        if (index != lastPinnedColumnIndex)
+        if (index < 0 || index >= _columns.Count)
         {
-            _columns.MoveAfterElemAt(index, lastPinnedColumnIndex);
+            return;
         }
-        _leftColumnsCount--;
+
+        QueueColumnPinned(_columns[index].Def.defName, false);
+    }
+
+    private void QueueColumnPinned(string columnDefName, bool pinned)
+    {
+        QueueCurrentConfiguration(TableIntent.SetColumnPinned(columnDefName, pinned));
+    }
+
+    private void QueueColumnWidth(string columnDefName, float width)
+    {
+        QueueCurrentConfiguration(TableIntent.ResizeColumn(columnDefName, width));
+    }
+
+    private void ResetColumnWidth(string columnDefName)
+    {
+        QueueCurrentConfiguration(TableIntent.ResetColumnWidth(columnDefName));
     }
 
     private void AddColumn(ColumnDef columnDef)
     {
-        TryAddColumn(columnDef, notifyToolbar: true, applyFilters: true);
+        if (TryDeferWhileDrawing(() => AddColumn(columnDef)))
+        {
+            return;
+        }
+
+        if (_columns.Any(column => column.Def == columnDef))
+        {
+            return;
+        }
+
+        List<string> visibleColumnDefNames = CaptureVisibleColumnDefNames();
+        visibleColumnDefNames.Add(columnDef.defName);
+        QueueCurrentConfiguration(TableIntent.SetVisibleColumns(visibleColumnDefNames));
     }
 
     private bool TryAddColumn(ColumnDef columnDef, bool notifyToolbar, bool applyFilters)
@@ -57,10 +84,6 @@ internal sealed partial class ObjectTable<TObject>
                 _leftColumnsCount = 1;
                 _sortColumn = hiddenColumn;
             }
-            if (notifyToolbar)
-            {
-                _toolbar.NotifyColumnAdded(hiddenColumn);
-            }
             if (applyFilters)
             {
                 SortRows();
@@ -76,8 +99,16 @@ internal sealed partial class ObjectTable<TObject>
             return false;
         }
 
-        ColumnWorker<TObject> columnWorker = (ColumnWorker<TObject>)Activator.CreateInstance(workerClass, columnDef);
-        ICollection<CellField> cellFields = columnWorker.GetCellFields(_tableWorker);
+        if (_tableSession.TryGetColumnWorker(columnDef.defName, out ColumnWorker<TObject>? columnWorker) == false
+            || columnWorker == null)
+        {
+            return false;
+        }
+        if (_tableSession.TryGetColumnFields(columnDef.defName, out ICollection<CellField>? cellFields) == false
+            || cellFields == null)
+        {
+            return false;
+        }
         Column column = new(columnWorker, _tableWorker, this, cellFields);
         _columns.Add(column);
         columnWorker.NotifyRowAdded(_objects);
@@ -91,11 +122,6 @@ internal sealed partial class ObjectTable<TObject>
         {
             ApplyFilters();
         }
-        if (notifyToolbar)
-        {
-            _toolbar.NotifyColumnAdded(column);
-        }
-
         return true;
     }
 
@@ -118,8 +144,17 @@ internal sealed partial class ObjectTable<TObject>
             return null;
         }
 
-        ColumnWorker<TObject> columnWorker = (ColumnWorker<TObject>)Activator.CreateInstance(workerClass, columnDef);
-        ICollection<CellField> cellFields = columnWorker.GetCellFields(_tableWorker);
+        if (TryGetOrStageColumnWorker(columnDef) == false
+            || _tableSession.TryGetColumnWorker(columnDef.defName, out ColumnWorker<TObject>? columnWorker) == false
+            || columnWorker == null)
+        {
+            return null;
+        }
+        if (_tableSession.TryGetColumnFields(columnDef.defName, out ICollection<CellField>? cellFields) == false
+            || cellFields == null)
+        {
+            return null;
+        }
         Column column = new(columnWorker, _tableWorker, this, cellFields);
         columnWorker.NotifyRowAdded(_objects);
         _filterColumns.Add(columnDef, column);
@@ -127,8 +162,28 @@ internal sealed partial class ObjectTable<TObject>
         return column;
     }
 
+    private bool TryGetOrStageColumnWorker(ColumnDef columnDef)
+    {
+        if (_tableSession.TryGetColumnWorker(columnDef.defName, out _))
+        {
+            return true;
+        }
+
+        List<string> filterColumnNames = _filterColumns.Keys
+            .Select(def => def.defName)
+            .Append(columnDef.defName)
+            .ToList();
+        _tableSession.SetColumnWorkerRoles(CaptureVisibleColumnDefNames(), filterColumnNames);
+        return _tableSession.TryGetColumnWorker(columnDef.defName, out _);
+    }
+
     private void AddColumnFilter(ColumnDef columnDef)
     {
+        if (TryDeferWhileDrawing(() => AddColumnFilter(columnDef)))
+        {
+            return;
+        }
+
         // Keep the newly created hidden column alive until the user can configure
         // its filter. Applying the current filters is unnecessary here because
         // the new filter is inactive, and a later filter reset may release it
@@ -138,6 +193,19 @@ internal sealed partial class ObjectTable<TObject>
 
     private void RemoveColumn(int index)
     {
+        if (!_applyingConfiguration)
+        {
+            if (index < 0 || index >= _columns.Count)
+            {
+                return;
+            }
+
+            List<string> visibleColumnDefNames = CaptureVisibleColumnDefNames();
+            visibleColumnDefNames.RemoveAt(index);
+            QueueCurrentConfiguration(TableIntent.SetVisibleColumns(visibleColumnDefNames));
+            return;
+        }
+
         if (index < _leftColumnsCount)
         {
             _leftColumnsCount--;
@@ -145,7 +213,6 @@ internal sealed partial class ObjectTable<TObject>
 
         Column column = _columns[index];
         _columns.RemoveAt(index);
-        _toolbar.NotifyColumnRemoved(column);
         if (HasActiveFilter(column))
         {
             _filterColumns[column.Def] = column;
@@ -172,12 +239,22 @@ internal sealed partial class ObjectTable<TObject>
 
     private void RemoveColumn(Column column)
     {
+        if (TryDeferWhileDrawing(() => RemoveColumn(column)))
+        {
+            return;
+        }
+
         int index = _columns.IndexOf(column);
         RemoveColumn(index);
     }
 
     private void RemoveColumn(ColumnDef columnDef)
     {
+        if (TryDeferWhileDrawing(() => RemoveColumn(columnDef)))
+        {
+            return;
+        }
+
         int index = _columns.FindIndex(column => column.Def == columnDef);
         RemoveColumn(index);
     }
@@ -187,6 +264,7 @@ internal sealed partial class ObjectTable<TObject>
         public float Width { get; private set; }
         public ColumnDef Def { get; }
         public bool IsRefreshable => _worker.IsRefreshable;
+        public ColumnWorker<TObject> Worker => _worker;
         public bool IsManuallyResized { get; private set; }
         public bool IsResized { get; private set; }
         public Comparison<int>? SortComparison { get; }
@@ -197,6 +275,7 @@ internal sealed partial class ObjectTable<TObject>
         private readonly ObjectTable<TObject> _parent;
         private readonly FloatMenu _menu;
         private readonly HashSet<string> _drawExceptionKeys = [];
+        private float _resizeWidth;
 
         public Column(ColumnWorker<TObject> worker, TableWorker tableWorker, ObjectTable<TObject> parent, ICollection<CellField> cellFields)
         {
@@ -211,27 +290,21 @@ internal sealed partial class ObjectTable<TObject>
             SortComparison = cellFields.FirstOrDefault().Compare;
             _menu = new FloatMenu([
                 new FloatMenuOption(Localization.Get(Localization.SortAscending), () => {
-                    parent._sortColumn = this;
-                    parent._sortDirection = SortDirectionAscending;
-                    parent.SortRows();
-                    parent.ApplyFilters();
+                    parent.QueueCurrentConfiguration(TableIntent.SetSort(def.defName, SortDirection.Ascending));
                 }, TexButton.ReorderUp, Color.white),
                 new FloatMenuOption(Localization.Get(Localization.SortDescending), () => {
-                    parent._sortColumn = this;
-                    parent._sortDirection = SortDirectionDescending;
-                    parent.SortRows();
-                    parent.ApplyFilters();
+                    parent.QueueCurrentConfiguration(TableIntent.SetSort(def.defName, SortDirection.Descending));
                 }, TexButton.ReorderDown, Color.white),
-                new FloatMenuOption(Localization.Get(Localization.ResetWidth), () => IsManuallyResized = false),
+                new FloatMenuOption(Localization.Get(Localization.ResetWidth), () => parent.ResetColumnWidth(def.defName)),
                 new FloatMenuOption(Localization.Get(Localization.Remove), () => parent.RemoveColumn(this), TexButton.Delete, Color.white)
             ]);
         }
 
-        public void Draw(Rect rect, Span<int> topRows, Span<int> bottomRows, int bottomRowsStart, float bottomRowsY, bool mouseXIsInVisibleArea)
+        public void Draw(Rect rect, TableFrame<TObject> frame, Span<int> topRows, Span<int> bottomRows, int bottomRowsStart, float bottomRowsY, bool mouseXIsInVisibleArea)
         {
             bool shouldDrawCellsNow = _worker.ShouldDrawCellsNow;
             rect.CutTop(out Rect headerCellRect, HeadersRowHeight)
-                .CutTop(out Rect topRowsRect, _parent._topRowsHeight)
+                .CutTop(out Rect topRowsRect, frame.TopRowsHeight)
                 .TakeRest(out Rect bottomRowsRect);
 
             DrawHeaderCell(headerCellRect, mouseXIsInVisibleArea);
@@ -242,7 +315,7 @@ internal sealed partial class ObjectTable<TObject>
                 {
                     using (new GUIClipScope(topRowsRect))
                     {
-                        DrawCells(topRowsRect with { x = 0f, y = 0f }, topRows, 0);
+                        DrawCells(topRowsRect with { x = 0f, y = 0f }, frame, topRows, 0);
                     }
                 }
 
@@ -250,7 +323,7 @@ internal sealed partial class ObjectTable<TObject>
                 {
                     using (new GUIClipScope(bottomRowsRect, new Vector2(0f, bottomRowsY)))
                     {
-                        DrawCells(bottomRowsRect with { x = 0f, y = 0f }, bottomRows, bottomRowsStart);
+                        DrawCells(bottomRowsRect with { x = 0f, y = 0f }, frame, bottomRows, bottomRowsStart);
                     }
                 }
             }
@@ -310,14 +383,14 @@ internal sealed partial class ObjectTable<TObject>
             mainControlRect.Tip(_tooltip);
         }
 
-        private void DrawCells(Rect rect, Span<int> rows, int displayedRowStart)
+        private void DrawCells(Rect rect, TableFrame<TObject> frame, Span<int> rows, int displayedRowStart)
         {
             ColumnWorker<TObject> worker = _worker;
             ref Rect cellRect = ref rect;
             int rowsCount = rows.Length;
             for (int i = 0; i < rowsCount; i++)
             {
-                cellRect.height = _parent.GetRowHeight(displayedRowStart + i);
+                cellRect.height = frame.RowHeights[displayedRowStart + i];
                 try
                 {
                     worker.DrawCell(cellRect, rows[i]);
@@ -441,7 +514,7 @@ internal sealed partial class ObjectTable<TObject>
             if (@event is { type: EventType.MouseDown, button: 0, modifiers: EventModifiers.None } && mouseIsOverRect)
             {
                 IsResized = true;
-                IsManuallyResized = true;
+                _resizeWidth = Width;
             }
             else if (IsResized)
             {
@@ -450,7 +523,7 @@ internal sealed partial class ObjectTable<TObject>
                 if (mouseXIsInVisibleArea == false)
                 {
                     _parent._scrollPosition.x++;
-                    Width++;
+                    _resizeWidth++;
                 }
             }
 
@@ -468,12 +541,14 @@ internal sealed partial class ObjectTable<TObject>
 
             if (OriginalEventUtility.EventType == EventType.MouseDrag)
             {
-                Width = Mathf.Clamp(Width + @event.delta.x, HeadersRowHeight, float.MaxValue);
+                _resizeWidth = Mathf.Clamp(_resizeWidth + @event.delta.x, HeadersRowHeight, float.MaxValue);
+                _parent.QueueColumnWidth(Def.defName, _resizeWidth);
                 @event.Use();
             }
             else if (@event.rawType == EventType.MouseUp)
             {
                 IsResized = false;
+                IsManuallyResized = true;
                 GUIUtils.ReleaseMouseControl();
                 @event.Use();
             }
@@ -490,21 +565,9 @@ internal sealed partial class ObjectTable<TObject>
                 && mouseXIsInVisibleArea
                 && rect.x < @event.mousePosition.x && @event.mousePosition.x < rect.xMax)
             {
-                List<Column> columns = parent._columns;
-                int leftColumnsCount = parent._leftColumnsCount;
-                int reorderedColumnIndex = columns.IndexOf(reorderedColumn);
-                int thisColumnIndex = columns.IndexOf(this);
-
-                bool reorderedColumnIsPinned = reorderedColumnIndex < leftColumnsCount;
-                bool thisColumnIsPinned = thisColumnIndex < leftColumnsCount;
-                if (reorderedColumnIsPinned && thisColumnIsPinned == false)
-                {
-                    parent._leftColumnsCount--;
-                }
-                else if (reorderedColumnIsPinned == false && thisColumnIsPinned)
-                {
-                    parent._leftColumnsCount++;
-                }
+                List<string> columnNames = parent._columns.Select(column => column.Def.defName).ToList();
+                int reorderedColumnIndex = columnNames.IndexOf(reorderedColumn.Def.defName);
+                int thisColumnIndex = columnNames.IndexOf(Def.defName);
 
                 float xMiddle = rect.x + rect.width / 2f;
                 float mouseX = @event.mousePosition.x;
@@ -512,7 +575,7 @@ internal sealed partial class ObjectTable<TObject>
                 {
                     if (thisColumnIndex - 1 != reorderedColumnIndex)
                     {
-                        parent._beforeDraw = () => columns.MoveBeforeElemAt(reorderedColumnIndex, thisColumnIndex);
+                        MoveAndQueue(parent, columnNames, reorderedColumnIndex, thisColumnIndex);
                     }
                 }
                 // xMiddle < mouseX && mouseX < rect.xMax check is not necessary here
@@ -522,7 +585,7 @@ internal sealed partial class ObjectTable<TObject>
                 {
                     if (thisColumnIndex + 1 != reorderedColumnIndex)
                     {
-                        parent._beforeDraw = () => columns.MoveAfterElemAt(reorderedColumnIndex, thisColumnIndex);
+                        MoveAndQueue(parent, columnNames, reorderedColumnIndex, thisColumnIndex + 1);
                     }
                 }
 
@@ -537,24 +600,49 @@ internal sealed partial class ObjectTable<TObject>
             }
         }
 
+        private static void MoveAndQueue(
+            ObjectTable<TObject> parent,
+            List<string> names,
+            int fromIndex,
+            int insertionIndex)
+        {
+            string moved = names[fromIndex];
+            names.RemoveAt(fromIndex);
+            if (insertionIndex > fromIndex)
+            {
+                insertionIndex--;
+            }
+
+            names.Insert(Mathf.Clamp(insertionIndex, 0, names.Count), moved);
+            parent.QueueCurrentConfiguration(TableIntent.ReorderColumns(names));
+        }
+
         [MethodImpl(MethodImplOptions.NoInlining)]
         private void HandlePin()
         {
             ObjectTable<TObject> parent = _parent;
-            int index = parent._columns.IndexOf(this);
-            if (index > parent._leftColumnsCount - 1)
-            {
-                parent._beforeDraw = () => parent.PinColumn(index);
-            }
-            else
-            {
-                parent._beforeDraw = () => parent.UnpinColumn(index);
-            }
+            bool isPinned = parent._tableSession.Current.PinnedColumnDefNames.Contains(
+                Def.defName,
+                StringComparer.Ordinal);
+            parent.QueueColumnPinned(Def.defName, !isPinned);
         }
 
         public void RecalcWidth(List<int> rows)
         {
             Width = Mathf.Max(_titleWidget.Size.x, _worker.GetWidth(rows)) + GUIStyles.TableCell.PadHor * 2f;
+        }
+
+        public void SetManualWidth(float width)
+        {
+            if (width > 0f)
+            {
+                Width = width;
+                IsManuallyResized = true;
+            }
+            else
+            {
+                IsManuallyResized = false;
+            }
         }
 
         public int CompareRows(int row1, int row2)

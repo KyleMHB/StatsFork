@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <EnableRuntimePackaging>false</EnableRuntimePackaging>
+        <AutomaticallyUseReferenceAssemblyPackages>false</AutomaticallyUseReferenceAssemblyPackages>
+        <TargetFrameworkRootPath>$(NuGetPackageRoot)microsoft.netframework.referenceassemblies.net48\1.0.3\build\</TargetFrameworkRootPath>
+        <EnableFrameworkPathOverride>false</EnableFrameworkPathOverride>
+        <NoStdLib>true</NoStdLib>
+        <OutputPath>bin\$(Configuration)\</OutputPath>
+        <IsTestProject>true</IsTestProject>
+        <RootNamespace>Stats.Tests</RootNamespace>
+        <AssemblyName>Stats.Tests</AssemblyName>
+        <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+        <RimWorldManagedPath Condition="'$(RimWorldManagedPath)' == ''">E:\Steam\steamapps\common\RimWorld\RimWorldWin64_Data\Managed</RimWorldManagedPath>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="..\Core\Source\Core.csproj" AdditionalProperties="EnableRuntimePackaging=false" />
+        <ProjectReference Include="..\Anomaly\Source\Anomaly.csproj" AdditionalProperties="EnableRuntimePackaging=false" />
+        <ProjectReference Include="..\Biotech\Source\Biotech.csproj" AdditionalProperties="EnableRuntimePackaging=false" />
+        <ProjectReference Include="..\CE\Source\CE.csproj" AdditionalProperties="EnableRuntimePackaging=false" />
+        <ProjectReference Include="..\Odyssey\Source\Odyssey.csproj" AdditionalProperties="EnableRuntimePackaging=false" />
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
+        <PackageReference Include="NUnit" Version="4.6.1" />
+        <PackageReference Include="NUnit3TestAdapter" Version="6.3.0" />
+        <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
+        <PackageReference Update="Krafs.Rimworld.Ref" GeneratePathProperty="true" PrivateAssets="all" />
+    </ItemGroup>
+    <ItemGroup>
+        <TestRuntimeReference Include="$(PkgKrafs_Rimworld_Ref)\ref\net472\*.dll" />
+        <InstalledRimWorldAssembly Include="$(RimWorldManagedPath)\*.dll" Condition="Exists('$(RimWorldManagedPath)')" />
+    </ItemGroup>
+    <Target Name="CopyTestRuntimeReferences" AfterTargets="Build">
+        <Copy
+            SourceFiles="@(TestRuntimeReference)"
+            DestinationFolder="$(OutputPath)"
+            SkipUnchangedFiles="true" />
+        <Copy
+            SourceFiles="@(InstalledRimWorldAssembly)"
+            DestinationFolder="$(OutputPath)"
+            SkipUnchangedFiles="true"
+            Condition="'@(InstalledRimWorldAssembly)' != ''" />
+    </Target>
+</Project>

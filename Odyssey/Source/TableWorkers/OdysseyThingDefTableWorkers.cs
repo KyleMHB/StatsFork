@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using RimWorld;
 using Stats.TableWorkers.ThingDef;
 using Verse;
@@ -15,16 +14,6 @@ public abstract class OdysseyThingDefTableWorker(TableDef tableDef) : ThingDefTa
     {
         string? packageId = thingDef.modContentPack?.PackageIdPlayerFacing;
         return packageId != null && packageId.Equals("Ludeon.RimWorld.Odyssey", StringComparison.OrdinalIgnoreCase);
-    }
-
-    protected static bool HasComp(ThingDef thingDef, string compPropertiesTypeName)
-    {
-        return thingDef.comps?.Any(comp => comp.GetType().Name == compPropertiesTypeName) == true;
-    }
-
-    protected static bool HasCompClass(ThingDef thingDef, string compClassTypeName)
-    {
-        return thingDef.comps?.Any(comp => OdysseyReflection.ValueToString(OdysseyReflection.GetMemberValue(comp, "compClass")) == compClassTypeName) == true;
     }
 
     protected static bool HasThingCategory(ThingDef thingDef, string categoryDefName)
@@ -48,7 +37,7 @@ public sealed class BookTableWorker(TableDef tableDef) : OdysseyThingDefTableWor
     protected override bool IsValidThingDef(ThingDef thingDef)
     {
         return IsOdysseyThingDef(thingDef)
-            && (thingDef.thingClass?.Name == "Book" || HasComp(thingDef, "CompProperties_Book"));
+            && (thingDef.thingClass?.Name == "Book" || OdysseyProjection.Current.ProjectThing(thingDef).HasBook);
     }
 }
 
@@ -84,8 +73,7 @@ public sealed class GravshipSystemTableWorker(TableDef tableDef) : OdysseyThingD
     {
         return IsOdysseyThingDef(thingDef)
             && (DefNameIn(thingDef, GravshipDefNames)
-                || HasComp(thingDef, "CompProperties_GravshipFacility")
-                || HasComp(thingDef, "CompProperties_GravshipThruster"));
+                || OdysseyProjection.Current.ProjectThing(thingDef).HasGravship);
     }
 }
 
@@ -101,8 +89,8 @@ public sealed class OrbitalInfrastructureTableWorker(TableDef tableDef) : Odysse
     {
         return IsOdysseyThingDef(thingDef)
             && (DefNameIn(thingDef, OrbitalInfrastructureDefNames)
-                || HasCompClass(thingDef, "CompOrbitalScanner")
-                || HasComp(thingDef, "CompProperties_OxygenPusher"));
+                || OdysseyProjection.Current.ProjectThing(thingDef).HasOrbitalScanner
+                || OdysseyProjection.Current.ProjectThing(thingDef).HasOxygenPusher);
     }
 }
 
@@ -111,7 +99,7 @@ public sealed class UniqueWeaponTableWorker(TableDef tableDef) : OdysseyThingDef
     protected override bool IsValidThingDef(ThingDef thingDef)
     {
         return IsOdysseyThingDef(thingDef)
-            && thingDef.GetCompProperties<CompProperties_UniqueWeapon>() != null
+            && OdysseyProjection.Current.ProjectThing(thingDef).HasUniqueWeapon
             && (thingDef.IsRangedWeapon || thingDef.IsMeleeWeapon);
     }
 }

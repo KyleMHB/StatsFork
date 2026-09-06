@@ -12,6 +12,7 @@
         <WarningLevel>5</WarningLevel>
         <RepoRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)'))</RepoRoot>
         <RuntimeOnlyRoot>$([System.IO.Path]::Combine('$(RepoRoot)', 'Runtime Only', 'Stats Forked'))</RuntimeOnlyRoot>
+        <EnableRuntimePackaging Condition="'$(EnableRuntimePackaging)' == ''">true</EnableRuntimePackaging>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
         <DebugType>portable</DebugType>
@@ -28,7 +29,7 @@
         <PackageReference Include="Lib.Harmony" Version="2.4.*" ExcludeAssets="runtime"/>
     </ItemGroup>
 
-    <Target Name="DeployRuntimeOnly" AfterTargets="Build">
+    <Target Name="DeployRuntimeOnly" AfterTargets="Build" Condition="'$(EnableRuntimePackaging)' == 'true'">
         <ItemGroup>
             <RootRuntimeFiles Include="$(RepoRoot)LoadFolders.xml" Condition="Exists('$(RepoRoot)LoadFolders.xml')" />
             <AboutRuntimeFiles Include="$(RepoRoot)About\**\*.*" Condition="Exists('$(RepoRoot)About')" />
@@ -184,7 +185,7 @@
             Condition="'@(CeTextureFiles)' != ''" />
     </Target>
 
-    <Target Name="RemoveObsoleteCompatibilityAssemblies" BeforeTargets="Build">
+    <Target Name="RemoveObsoleteCompatibilityAssemblies" BeforeTargets="Build" Condition="'$(EnableRuntimePackaging)' == 'true'">
         <Delete Files="$(RepoRoot)Odyssey\Assemblies\Odyssey.dll;$(RepoRoot)CE\Assemblies\CE.dll;$(RepoRoot)Biotech\Assemblies\Biotech.dll;$(RepoRoot)Anomaly\Assemblies\Anomaly.dll" />
     </Target>
 </Project>

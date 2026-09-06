@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-09-05
+
+### Added
+
+- Added a .NET Framework 4.8 NUnit test project with table-session, column-lifecycle, Odyssey projection, and XML worker-resolution coverage.
+- Added an immutable rendered-table frame seam that keeps rows, heights, columns, and geometry from mixed Layout generations.
+- Added durable testing and table-frame architecture notes, including the RimWorld log acceptance scenarios.
+
+### Changed
+
+- Table actions now queue for the next frame preparation and configuration changes publish as one atomic transition.
+- Column workers now have idempotent disposal and Odyssey workers consume typed projections through a reflection adapter.
+- Test builds disable runtime packaging and keep generated test output outside the mod deployment folders.
+
+### Fixed
+
+- Fixed stale row-height state causing visible-row drawing to index geometry from a previous row generation after filters or presets changed the table.
+- Fixed worker subscriptions and staged workers surviving hidden-column, remove/re-add, or failed-transition paths.
+
 ## 2026-08-28
 
 ### Added

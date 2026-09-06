@@ -16,10 +16,10 @@ public abstract class FishingOutcomeTextColumnWorker(ColumnDef columnDef) : Colu
 
     protected override TextCell MakeCell(Def def)
     {
-        return new TextCell(GetText(def));
+        return new TextCell(GetText(OdysseyProjection.ProjectFishingOutcome(def)));
     }
 
-    protected abstract string? GetText(Def def);
+    protected abstract string? GetText(FishingOutcomeProjection projection);
 
     public override ICollection<CellField> GetCellFields(TableWorker tableWorker)
     {
@@ -62,34 +62,34 @@ public abstract class FishingOutcomeNumberColumnWorker(ColumnDef columnDef, stri
 
     protected override NumberCell MakeCell(Def def)
     {
-        return TryGetValue(def, out decimal value) ? new NumberCell(value, formatString) : default;
+        return TryGetValue(OdysseyProjection.ProjectFishingOutcome(def), out decimal value) ? new NumberCell(value, formatString) : default;
     }
 
-    protected abstract bool TryGetValue(Def def, out decimal value);
+    protected abstract bool TryGetValue(FishingOutcomeProjection projection, out decimal value);
 }
 
 public sealed class FishingOutcomeLabelColumnWorker(ColumnDef columnDef) : FishingOutcomeTextColumnWorker(columnDef)
 {
-    protected override string? GetText(Def def)
+    protected override string? GetText(FishingOutcomeProjection projection)
     {
-        return OdysseyReflection.ValueToString(OdysseyReflection.GetMemberValue(def, "letterLabel")) ?? def.LabelCap.RawText;
+        return projection.Label;
     }
 }
 
 public sealed class FishingOutcomeFishTypeColumnWorker(ColumnDef columnDef) : FishingOutcomeTextColumnWorker(columnDef)
 {
-    protected override string? GetText(Def def)
+    protected override string? GetText(FishingOutcomeProjection projection)
     {
-        return OdysseyReflection.ValueToString(OdysseyReflection.GetMemberValue(def, "fishType"));
+        return projection.FishType;
     }
 }
 
 public sealed class FishingOutcomeLetterColumnWorker(ColumnDef columnDef) : FishingOutcomeTextColumnWorker(columnDef)
 {
-    protected override string? GetText(Def def)
+    protected override string? GetText(FishingOutcomeProjection projection)
     {
-        string? letterDef = OdysseyReflection.ValueToString(OdysseyReflection.GetMemberValue(def, "letterDef"));
-        string? letterText = OdysseyReflection.ValueToString(OdysseyReflection.GetMemberValue(def, "letterText"));
+        string? letterDef = projection.LetterDefinition;
+        string? letterText = projection.LetterText;
 
         if (letterDef.NullOrEmpty())
         {
@@ -107,10 +107,10 @@ public sealed class FishingOutcomeLetterColumnWorker(ColumnDef columnDef) : Fish
 
 public sealed class FishingOutcomeDamageColumnWorker(ColumnDef columnDef) : FishingOutcomeTextColumnWorker(columnDef)
 {
-    protected override string? GetText(Def def)
+    protected override string? GetText(FishingOutcomeProjection projection)
     {
-        string? damageDef = OdysseyReflection.ValueToString(OdysseyReflection.GetMemberValue(def, "damageDef"));
-        string? damageAmountRange = OdysseyReflection.ValueToString(OdysseyReflection.GetMemberValue(def, "damageAmountRange"));
+        string? damageDef = projection.DamageDefinition;
+        string? damageAmountRange = projection.DamageAmountRange;
 
         if (damageDef.NullOrEmpty())
         {
@@ -123,19 +123,25 @@ public sealed class FishingOutcomeDamageColumnWorker(ColumnDef columnDef) : Fish
 
 public sealed class FishingOutcomeHediffColumnWorker(ColumnDef columnDef) : FishingOutcomeTextColumnWorker(columnDef)
 {
-    protected override string? GetText(Def def)
+    protected override string? GetText(FishingOutcomeProjection projection)
     {
-        return OdysseyReflection.ValueToString(OdysseyReflection.GetMemberValue(def, "addsHediff"));
+        return projection.Hediff;
     }
 }
 
 public sealed class FishingOutcomeSeverityColumnWorker(ColumnDef columnDef) : FishingOutcomeNumberColumnWorker(columnDef, "0.###")
 {
-    protected override bool TryGetValue(Def def, out decimal value)
+    protected override bool TryGetValue(FishingOutcomeProjection projection, out decimal value)
     {
-        return OdysseyReflection.TryGetDecimal(OdysseyReflection.GetMemberValue(def, "hediffSeverity"), out value);
+        if (projection.Severity.HasValue)
+        {
+            value = projection.Severity.Value;
+            return true;
+        }
+
+        value = 0m;
+        return false;
     }
 }
 
 public sealed class FishingOutcomeContentSourceColumnWorker(ColumnDef columnDef) : OdysseyDefContentSourceColumnWorker(columnDef);
-

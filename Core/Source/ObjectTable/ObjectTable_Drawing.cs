@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using Stats.Utils;
 using Stats.Utils.Extensions;
@@ -14,50 +15,97 @@ internal sealed partial class ObjectTable<TObject>
     internal override void Draw(Rect rect)
     {
         using MultiValueDisplay.Scope displayScope = MultiValueDisplay.Enter(_expandMultiValueCells);
-        if (_beforeDraw != null)
+        if (Event.current.type == EventType.Layout && _beforeDraw != null)
         {
             _beforeDraw.Invoke();
             _beforeDraw = null;
         }
 
-        if (Event.current.type == EventType.Layout)
+        _isDrawing = true;
+        try
         {
-            RefreshLiveCells();
-            RecalcLayout();
+            bool layoutPreparationSucceeded = Event.current.type != EventType.Layout;
+            if (Event.current.type == EventType.Layout)
+            {
+                try
+                {
+                    _tableSession.StagePendingConfiguration(ApplyTableConfiguration);
+                    RefreshLiveCells();
+                    RecalcLayout();
+                    layoutPreparationSucceeded = true;
+                }
+                catch (Exception exception)
+                {
+                    _tableSession.RejectStagedConfiguration(exception);
+                    LogLayoutPreparationFailure(exception);
+                }
+            }
+
+            TableFrame<TObject> frame = _tableSession.Frame;
+            if (Event.current.type == EventType.Layout && layoutPreparationSucceeded)
+            {
+                frame = _tableSession.PrepareFrame(
+                    new TableLayoutMetrics(
+                        _rows,
+                        _rowHeights,
+                        _topRowsCount,
+                        _topRowsHeight,
+                        _bottomRowsHeight,
+                        _contentSize.x,
+                        _contentSize.y,
+                        _leftColumnsWidth,
+                        _columns.Select(column => column.Def.defName).ToList(),
+                        _columns.Select(column => column.Width).ToList(),
+                        _leftColumnsCount)).Frame;
+            }
+
+            // Layout
+            rect
+                .CutTop(out Rect toolbarRect, GUIStyles.TableToolbar.Height)
+                .TakeRest(out Rect tableRect);
+
+            // Toolbar
+            _toolbar.Draw(toolbarRect);
+
+            //if (showSettingsMenu)
+            //{
+            //    DrawColumnsTab(ref rect);
+            //}
+
+            Rect viewportRect = tableRect;
+            Vector2 contentSize = new(frame.ContentWidth, frame.ContentHeight);
+            Rect contentRect = new(Vector2.zero, contentSize);
+            // Will scroll vertically
+            if (frame.BottomRowsHeight > 0f)
+            {
+                viewportRect.width -= GenUI.ScrollBarWidth;
+                // Add empty space for more convenient vertical scrolling.
+                contentRect.height += viewportRect.height - HeadersRowHeight - frame.TopRowsHeight;
+            }
+            // Will scroll horizontally
+            if (contentRect.width > viewportRect.width)
+            {
+                viewportRect.height -= GenUI.ScrollBarWidth;
+                contentRect.height -= GenUI.ScrollBarWidth;
+            }
+
+            using (new GUIScrollScope(tableRect, ref _scrollPosition, contentRect)) { }
+
+            DrawVisibleContent(viewportRect, frame);
         }
-
-        // Layout
-        rect
-            .CutTop(out Rect toolbarRect, GUIStyles.TableToolbar.Height)
-            .TakeRest(out Rect tableRect);
-
-        // Toolbar
-        _toolbar.Draw(toolbarRect);
-
-        //if (showSettingsMenu)
-        //{
-        //    DrawColumnsTab(ref rect);
-        //}
-
-        Rect viewportRect = tableRect;
-        Rect contentRect = new(Vector2.zero, _contentSize);
-        // Will scroll vertically
-        if (_bottomRowsHeight > 0f)
+        finally
         {
-            viewportRect.width -= GenUI.ScrollBarWidth;
-            // Add empty space for more convenient vertical scrolling.
-            contentRect.height += viewportRect.height - HeadersRowHeight - _topRowsHeight;
+            _isDrawing = false;
         }
-        // Will scroll horizontally
-        if (contentRect.width > viewportRect.width)
+    }
+
+    private void LogLayoutPreparationFailure(Exception exception)
+    {
+        string key = $"{exception.GetType().FullName}:{exception.Message}";
+        if (_layoutFailureWarnings.Add(key))
         {
-            viewportRect.height -= GenUI.ScrollBarWidth;
-            contentRect.height -= GenUI.ScrollBarWidth;
+            Log.Warning($"Stats deferred a table configuration after layout preparation failed: {exception.Message}");
         }
-
-        using (new GUIScrollScope(tableRect, ref _scrollPosition, contentRect)) { }
-
-        DrawVisibleContent(viewportRect);
     }
 
     private void RefreshLiveCells()
@@ -78,8 +126,14 @@ internal sealed partial class ObjectTable<TObject>
             }
         }
 
-        foreach (Column column in _filterColumns.Values)
+        foreach (string columnDefName in _tableSession.FilterOnlyColumnDefNames)
         {
+            if (_filterColumns.FirstOrDefault(pair =>
+                    string.Equals(pair.Key.defName, columnDefName, StringComparison.Ordinal)).Value is not { } column)
+            {
+                continue;
+            }
+
             if (column.IsRefreshable && column.RefreshCells())
             {
                 anyColumnChanged = true;
@@ -93,39 +147,46 @@ internal sealed partial class ObjectTable<TObject>
         }
     }
 
-    private void DrawVisibleContent(Rect rect)
+    private void DrawVisibleContent(Rect rect, TableFrame<TObject> frame)
     {
         Event @event = Event.current;
         Vector2 scrollPosition = _scrollPosition;
-        float bottomRowsRectHeight = rect.height - HeadersRowHeight - _topRowsHeight;
+        float bottomRowsRectHeight = rect.height - HeadersRowHeight - frame.TopRowsHeight;
         GetVisibleBottomRows(
+            frame,
             scrollPosition.y,
             bottomRowsRectHeight,
             out int visibleBottomRowsStart,
             out int visibleBottomRowsCount,
             out float firstVisibleBottomRowY);
-        int topRowsCount = _topRowsCount;
+        int topRowsCount = frame.PinnedRowCount;
 
         Span<int> visibleBottomRows = stackalloc int[visibleBottomRowsCount];
-        _rows.CopyTo(visibleBottomRows, visibleBottomRowsStart);
+        for (int i = 0; i < visibleBottomRowsCount; i++)
+        {
+            visibleBottomRows[i] = frame.Rows[visibleBottomRowsStart + i];
+        }
 
         Span<int> topRows = stackalloc int[topRowsCount];
-        _rows.CopyTo(topRows);
+        for (int i = 0; i < topRowsCount; i++)
+        {
+            topRows[i] = frame.Rows[i];
+        }
 
         // Layout
         rect
-            .CutLeft(out Rect leftColumnsRect, _leftColumnsWidth)
+            .CutLeft(out Rect leftColumnsRect, frame.LeftColumnsWidth)
             .TakeRest(out Rect rightColumnsRect)
             .CutTop(HeadersRowHeight)// Register mouse-drag only below headers to not interfere with them.
             .TakeRest(out Rect mouseDragScrollAreaRect);
 
         // Rows
-        DrawRows(rect, visibleBottomRowsStart, visibleBottomRowsCount, firstVisibleBottomRowY);
+        DrawRows(rect, frame, visibleBottomRowsStart, visibleBottomRowsCount, firstVisibleBottomRowY);
 
         // Pinned columns
-        if (_leftColumnsCount > 0)
+        if (frame.PinnedColumnCount > 0)
         {
-            DrawColumns(leftColumnsRect, Vector2.zero, LeftColumns, topRows, visibleBottomRows, visibleBottomRowsStart, firstVisibleBottomRowY);
+            DrawColumns(leftColumnsRect, frame, Vector2.zero, 0, frame.PinnedColumnCount, topRows, visibleBottomRows, visibleBottomRowsStart, firstVisibleBottomRowY);
             // Separator line
             if (@event.type == EventType.Repaint)
             {
@@ -134,11 +195,11 @@ internal sealed partial class ObjectTable<TObject>
         }
 
         // Unpinned columns
-        if (RightColumnsCount > 0)
+        if (frame.VisibleColumnDefNames.Count > frame.PinnedColumnCount)
         {
             using (new GUIClipScope(rightColumnsRect, new Vector2(-scrollPosition.x, 0f)))
             {
-                DrawColumns(rightColumnsRect with { x = 0f, y = 0f }, scrollPosition, RightColumns, topRows, visibleBottomRows, visibleBottomRowsStart, firstVisibleBottomRowY);
+                DrawColumns(rightColumnsRect with { x = 0f, y = 0f }, frame, scrollPosition, frame.PinnedColumnCount, frame.VisibleColumnDefNames.Count, topRows, visibleBottomRows, visibleBottomRowsStart, firstVisibleBottomRowY);
             }
         }
 
@@ -146,37 +207,20 @@ internal sealed partial class ObjectTable<TObject>
     }
 
     private void GetVisibleBottomRows(
+        TableFrame<TObject> frame,
         float scrollY,
         float viewportHeight,
         out int start,
         out int count,
         out float firstRowY)
     {
-        start = _topRowsCount;
-        float heightBeforeStart = 0f;
-        while (start < _rows.Count)
-        {
-            float rowHeight = GetRowHeight(start);
-            if (heightBeforeStart + rowHeight > scrollY)
-            {
-                break;
-            }
-
-            heightBeforeStart += rowHeight;
-            start++;
-        }
-
-        firstRowY = heightBeforeStart - scrollY;
-        count = 0;
-        float visibleHeight = firstRowY;
-        while (start + count < _rows.Count && visibleHeight < viewportHeight)
-        {
-            visibleHeight += GetRowHeight(start + count);
-            count++;
-        }
+        VisibleRowRange range = frame.GetVisibleBottomRows(scrollY, viewportHeight);
+        start = range.Start;
+        count = range.Count;
+        firstRowY = range.FirstRowY;
     }
 
-    private void DrawColumns(Rect rect, Vector2 scrollPosition, ReadOnlyListSegment<Column> columns, Span<int> topRows, Span<int> bottomRows, int bottomRowsStart, float bottomRowsY)
+    private void DrawColumns(Rect rect, TableFrame<TObject> frame, Vector2 scrollPosition, int columnStart, int columnEnd, Span<int> topRows, Span<int> bottomRows, int bottomRowsStart, float bottomRowsY)
     {
         Event @event = Event.current;
         float scrollX = scrollPosition.x;
@@ -185,16 +229,22 @@ internal sealed partial class ObjectTable<TObject>
         float mouseX = @event.mousePosition.x;
         bool mouseXIsInVisibleArea = xMin < mouseX && mouseX < xMax;
         ref Rect columnRect = ref rect;
-        int columnsCount = columns.Length;
-        for (int i = 0; i < columnsCount; i++)
+        for (int frameColumnIndex = columnStart; frameColumnIndex < columnEnd; frameColumnIndex++)
         {
-            Column column = columns[i];
-            columnRect.width = column.Width;
+            string columnDefName = frame.VisibleColumnDefNames[frameColumnIndex];
+            Column? column = _columns.FirstOrDefault(candidate =>
+                string.Equals(candidate.Def.defName, columnDefName, StringComparison.Ordinal));
+            if (column == null)
+            {
+                continue;
+            }
+
+            columnRect.width = frame.ColumnWidths[frameColumnIndex];
             float columnRectXmax = columnRect.xMax;
 
             if (xMin < columnRectXmax && columnRect.xMin < xMax)
             {
-                column.Draw(columnRect, topRows, bottomRows, bottomRowsStart, bottomRowsY, mouseXIsInVisibleArea);
+                column.Draw(columnRect, frame, topRows, bottomRows, bottomRowsStart, bottomRowsY, mouseXIsInVisibleArea);
             }
             else if (column.IsResized)
             {
@@ -205,14 +255,14 @@ internal sealed partial class ObjectTable<TObject>
         }
     }
 
-    private void DrawRows(Rect rect, int bottomRowsStart, int bottomRowsCount, float bottomRowsY)
+    private void DrawRows(Rect rect, TableFrame<TObject> frame, int bottomRowsStart, int bottomRowsCount, float bottomRowsY)
     {
         bool isRepaint = Event.current.type == EventType.Repaint;
 
         // Layout
         rect
             .CutTop(out Rect headersRowRect, HeadersRowHeight)
-            .CutTop(out Rect topRowsRect, _topRowsHeight)
+            .CutTop(out Rect topRowsRect, frame.TopRowsHeight)
             .TakeRest(out Rect bottomRowsRect);
 
         // Headers row
@@ -224,7 +274,7 @@ internal sealed partial class ObjectTable<TObject>
         }
 
         // Pinned rows
-        int topRowsCount = _topRowsCount;
+        int topRowsCount = frame.PinnedRowCount;
         if (topRowsCount > 0)
         {
             if (isRepaint)
@@ -236,7 +286,7 @@ internal sealed partial class ObjectTable<TObject>
             Rect rowRect = topRowsRect;
             for (int i = 0; i < topRowsCount; i++)
             {
-                rowRect.height = GetRowHeight(i);
+                rowRect.height = frame.RowHeights[i];
                 DrawRow(rowRect, i);
                 rowRect.y = rowRect.yMax;
             }
@@ -250,7 +300,7 @@ internal sealed partial class ObjectTable<TObject>
         if (bottomRowsCount > 0)
         {
             float rectYmax = rect.yMax;
-            float firstRowHeight = GetRowHeight(bottomRowsStart) + bottomRowsY;
+            float firstRowHeight = frame.RowHeights[bottomRowsStart] + bottomRowsY;
             int bottomRowsEnd = bottomRowsCount + bottomRowsStart;// Exclusive
             Rect rowRect = bottomRowsRect with { height = firstRowHeight };
             for (int i = bottomRowsStart; i < bottomRowsEnd; i++)
@@ -260,7 +310,7 @@ internal sealed partial class ObjectTable<TObject>
                 rowRect.y = rowRect.yMax;
                 if (i + 1 < bottomRowsEnd)
                 {
-                    rowRect.height = GetRowHeight(i + 1);
+                    rowRect.height = frame.RowHeights[i + 1];
                 }
 
                 if (rowRect.yMax > rectYmax)

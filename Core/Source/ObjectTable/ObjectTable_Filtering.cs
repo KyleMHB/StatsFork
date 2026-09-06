@@ -44,7 +44,6 @@ internal sealed partial class ObjectTable<TObject>
         int fieldIndex = 0;
         foreach (CellField field in fields)
         {
-            field.FilterWidget.OnChange += ApplyFilters;
             string labelText = field.Label is Label label ? label.Text : field.Label.GetType().Name;
             _filters.Add(new FilterEntry(column.Def.defName, column, field.Label, labelText, field.FilterWidget, $"{column.Def.defName}:{fieldIndex}"));
             fieldIndex++;
@@ -97,6 +96,12 @@ internal sealed partial class ObjectTable<TObject>
 
     private void ReleaseUnusedFilterColumns()
     {
+        if (_applyingConfiguration == false && TryDeferWhileDrawing(ReleaseUnusedFilterColumns))
+        {
+            return;
+        }
+
+        bool removedColumn = false;
         foreach (Column column in _filterColumns.Values.ToList())
         {
             if (HasActiveFilter(column))
@@ -106,11 +111,35 @@ internal sealed partial class ObjectTable<TObject>
 
             _filterColumns.Remove(column.Def);
             UnregisterColumnFilters(column);
+            removedColumn = true;
+        }
+
+        if (removedColumn && _applyingConfiguration == false)
+        {
+            _tableSession.SetFilterOnlyColumnWorkers(
+                _filterColumns.Keys.Select(column => column.defName));
         }
     }
 
     private void ApplyFilters()
     {
+        if (_applyingConfiguration)
+        {
+            ApplyFiltersNow();
+            return;
+        }
+
+        if (TryDeferWhileDrawing(ApplyFilters))
+        {
+            return;
+        }
+
+        QueueCurrentConfiguration(TableIntent.SetFilters(CaptureTableFilterStates()));
+    }
+
+    private void ApplyFiltersNow()
+    {
+
         List<Filter> activeFilters = _filters
             .Select(filter => filter.Widget)
             .Where(filter => filter.IsActive)
@@ -165,6 +194,17 @@ internal sealed partial class ObjectTable<TObject>
 
     private void ResetFilters()
     {
+        if (_applyingConfiguration)
+        {
+            ResetFiltersNow();
+            return;
+        }
+
+        QueueCurrentConfiguration(TableIntent.SetFilters(Array.Empty<TableFilterState>()));
+    }
+
+    private void ResetFiltersNow()
+    {
         foreach (FilterEntry filter in _filters)
         {
             if (filter.Widget.IsActive)
@@ -173,6 +213,13 @@ internal sealed partial class ObjectTable<TObject>
             }
         }
         ReleaseUnusedFilterColumns();
+    }
+
+    private List<TableFilterState> CaptureTableFilterStates()
+    {
+        return CaptureFilterPresetStates()
+            .Select(state => new TableFilterState(state.columnDefName, state.filterId, state.label, state.state))
+            .ToList();
     }
 
     private List<FilterPresetState> CaptureFilterPresetStates()
@@ -199,7 +246,7 @@ internal sealed partial class ObjectTable<TObject>
 
     private void ApplyFilterPresetStates(List<FilterPresetState> states)
     {
-        ResetFilters();
+        ResetFiltersNow();
 
         foreach (FilterPresetState state in states)
         {
@@ -230,7 +277,7 @@ internal sealed partial class ObjectTable<TObject>
             }
         }
 
-        ApplyFilters();
+        ApplyFiltersNow();
     }
 
     private bool HasActiveLiveTableFilter()

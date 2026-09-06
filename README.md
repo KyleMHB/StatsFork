@@ -84,19 +84,26 @@ The shared build configuration is in `Directory.Build.props`. Build output and r
 
 ## Testing and Validation
 
-The primary validation workflow is a solution build:
+Run the test suite against the full solution:
+
+```powershell
+dotnet test Stats.sln -c Debug -m:1 /p:UseSharedCompilation=false
+```
+
+Run both production build configurations:
 
 ```powershell
 dotnet build Stats.sln -c Debug -m:1 /p:UseSharedCompilation=false
+dotnet build Stats.sln -c Release -m:1 /p:UseSharedCompilation=false
 ```
 
-This checks that the Core, Biotech, Anomaly, CE, and Odyssey projects compile against their configured references.
+The tests target .NET Framework 4.8, keep runtime packaging disabled, and include XML checks that resolve every table and column worker class in the built Core and compatibility assemblies. The shared build configuration in `Directory.Build.props` keeps test output separate from runtime-only packaging.
 
-## Contributing and Forking Policy
+See [TESTING.md](TESTING.md) for the table-frame regression, log checks, and manual RimWorld scenarios.
+
+## Contributing
 
 > Contributions, issues, and feature requests are welcome.
->
-> **Forking Policy:** If your fork primarily consists of bug fixes or feature additions that align with the core vision of this project, I reserve the right to request that your changes be submitted as a Pull Request to this existing codebase rather than being published as a completely separate standalone release, package, listing, or distribution.
 
 ## Links
 

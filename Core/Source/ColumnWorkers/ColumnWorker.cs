@@ -27,9 +27,26 @@ public abstract class ColumnWorker<TObject>
 
     public abstract void NotifyRowRemoved(int row);
 
+    /// <summary>
+    /// Clears the row cache before a table rebuild. Optional for external
+    /// workers so existing subclasses remain source-compatible.
+    /// </summary>
+    public virtual void ResetRows()
+    {
+    }
+
     public abstract bool RefreshCells();
 
     public abstract ICollection<CellField> GetCellFields(TableWorker tableWorker);
+
+    /// <summary>
+    /// Releases subscriptions and other resources owned by this worker.
+    /// Existing external workers remain source-compatible because the hook is
+    /// optional and idempotent by contract.
+    /// </summary>
+    public virtual void Dispose()
+    {
+    }
 }
 
 public interface IQualityAwareColumnWorker;
@@ -82,6 +99,12 @@ public abstract class ColumnWorker<TObject, TCell> : ColumnWorker<TObject> where
         {
             NotifyRowAdded(rows[i]);
         }
+    }
+
+    public override void ResetRows()
+    {
+        _cells.Clear();
+        _refreshableCellsCount = 0;
     }
 
     public override void NotifyRowAdded(TObject row)

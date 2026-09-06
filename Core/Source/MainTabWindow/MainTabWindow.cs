@@ -188,6 +188,7 @@ public sealed partial class MainTabWindow : RimWorld.MainTabWindow
             }
         }
         _tables.Remove(table);
+        table.TableWidget.Dispose();
         SaveTableSession();
     }
 

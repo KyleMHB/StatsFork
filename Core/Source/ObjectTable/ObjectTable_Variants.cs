@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using RimWorld;
@@ -25,22 +26,12 @@ internal sealed partial class ObjectTable<TObject>
             return;
         }
 
-        _showVariants = showVariants;
-        string? sortColumnDefName = _sortColumn?.Def.defName;
-        int sortDirection = _sortDirection;
-        List<string> visibleColumnDefNames = CaptureVisibleColumnDefNames();
-        List<FilterPresetState> filterStates = CaptureFilterPresetStates();
-
-        RebuildRowsAndColumns(GetCurrentObjects(), visibleColumnDefNames);
-        ApplyFilterPresetStates(filterStates);
-
-        if (sortColumnDefName?.Length > 0)
+        if (TryDeferWhileDrawing(() => SetVariantsMode(showVariants)))
         {
-            _sortColumn = _columns.FirstOrDefault(column => column.Def.defName == sortColumnDefName) ?? _sortColumn;
-            _sortDirection = sortDirection;
-            SortRows();
-            ApplyFilters();
+            return;
         }
+
+        QueueCurrentConfiguration(TableIntent.SetShowVariants(showVariants));
     }
 
     private void SetQuality(QualityCategory quality)
@@ -50,22 +41,12 @@ internal sealed partial class ObjectTable<TObject>
             return;
         }
 
-        _quality = quality;
-        string? sortColumnDefName = _sortColumn?.Def.defName;
-        int sortDirection = _sortDirection;
-        List<string> visibleColumnDefNames = CaptureVisibleColumnDefNames();
-        List<FilterPresetState> filterStates = CaptureFilterPresetStates();
-
-        RebuildRowsAndColumns(GetCurrentObjects(), visibleColumnDefNames);
-        ApplyFilterPresetStates(filterStates);
-
-        if (sortColumnDefName?.Length > 0)
+        if (TryDeferWhileDrawing(() => SetQuality(quality)))
         {
-            _sortColumn = _columns.FirstOrDefault(column => column.Def.defName == sortColumnDefName) ?? _sortColumn;
-            _sortDirection = sortDirection;
-            SortRows();
-            ApplyFilters();
+            return;
         }
+
+        QueueCurrentConfiguration(TableIntent.SetQuality((int)quality));
     }
 
     private void RebuildRowsAndColumns(List<TObject> objects, List<string> visibleColumnDefNames)
@@ -93,12 +74,11 @@ internal sealed partial class ObjectTable<TObject>
         _topRowsCount = 0;
     }
 
-    private void ResetColumns(List<string> visibleColumnDefNames)
+    private void ResetColumns(List<string> visibleColumnDefNames, IReadOnlyList<string>? pinnedColumnDefNames = null, IReadOnlyList<float>? columnWidths = null)
     {
         foreach (Column column in _columns)
         {
             UnregisterColumnFilters(column);
-            _toolbar.NotifyColumnRemoved(column);
         }
 
         foreach (Column column in _filterColumns.Values)
@@ -113,6 +93,11 @@ internal sealed partial class ObjectTable<TObject>
         _reorderedColumn = null;
         _pressedColumn = null;
 
+        if (_applyingConfiguration == false)
+        {
+            _tableSession.SetColumnWorkerRoles(visibleColumnDefNames, Array.Empty<string>());
+        }
+
         IEnumerable<ColumnDef> columnDefs = visibleColumnDefNames
             .Select(ResolveVisibleColumnDef)
             .Where(column => column != null)!;
@@ -122,10 +107,24 @@ internal sealed partial class ObjectTable<TObject>
             TryAddColumn(columnDef, notifyToolbar: true, applyFilters: false);
         }
 
-        if (_columns.Count > 0)
+        IReadOnlyList<string> pinnedNames = pinnedColumnDefNames ??
+            (visibleColumnDefNames.Count > 0 ? new[] { visibleColumnDefNames[0] } : Array.Empty<string>());
+        _leftColumnsCount = _columns.Count(column => pinnedNames.Contains(column.Def.defName, StringComparer.Ordinal));
+        if (_leftColumnsCount == 0 && _columns.Count > 0 && pinnedColumnDefNames == null)
         {
             _leftColumnsCount = 1;
-            _sortColumn = _columns[0];
+        }
+
+        ApplyColumnWidths(columnWidths);
+        _sortColumn = _columns.Count > 0 ? _columns[0] : null;
+    }
+
+    private void ApplyColumnWidths(IReadOnlyList<float>? widths)
+    {
+        for (int i = 0; i < _columns.Count; i++)
+        {
+            float width = widths != null && i < widths.Count ? widths[i] : 0f;
+            _columns[i].SetManualWidth(width);
         }
     }
 

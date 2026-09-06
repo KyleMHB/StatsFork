@@ -72,8 +72,4 @@ internal sealed partial class ObjectTable<TObject>
         }
     }
 
-    private float GetRowHeight(int rowPosition)
-    {
-        return _rowHeights[rowPosition];
-    }
 }

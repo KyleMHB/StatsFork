@@ -16,13 +16,7 @@ internal sealed partial class ObjectTable<TObject>
 
     private void ApplyVisibleColumns(List<string> visibleColumnDefNames)
     {
-        string? sortColumnDefName = _sortColumn?.Def.defName;
-        int sortDirection = _sortDirection;
-
-        ResetColumns(visibleColumnDefNames);
-        RestoreSort(sortColumnDefName, sortDirection);
-        SortRows();
-        ApplyFilters();
+        QueueCurrentConfiguration(TableIntent.SetVisibleColumns(visibleColumnDefNames));
     }
 
     private void RestoreSort(string? sortColumnDefName, int sortDirection)
@@ -73,14 +67,17 @@ internal sealed partial class ObjectTable<TObject>
 
     private void SetExpandedMultiValueCells(bool expanded)
     {
-        if (_expandMultiValueCells == expanded)
+        if (_tableSession.Current.ExpandMultiValueCells == expanded)
         {
             return;
         }
 
-        _expandMultiValueCells = expanded;
-        StatsMod.Instance.Settings.expandedMultiValueCells = expanded;
-        StatsMod.Instance.WriteSettings();
+        if (TryDeferWhileDrawing(() => SetExpandedMultiValueCells(expanded)))
+        {
+            return;
+        }
+
+        QueueCurrentConfiguration(TableIntent.SetExpandedMultiValueCells(expanded));
     }
 
     private void SetDefaultPreset(TablePreset preset)
@@ -106,25 +103,23 @@ internal sealed partial class ObjectTable<TObject>
 
     private void ApplyPreset(TablePreset preset)
     {
-        SetExpandedMultiValueCells(preset.expandMultiValueCells);
-        if (SupportsVariants && _showVariants != preset.showVariants)
+        if (TryDeferWhileDrawing(() => ApplyPreset(preset)))
         {
-            string? sortColumnDefName = _sortColumn?.Def.defName;
-            int sortDirection = _sortDirection;
-
-            _showVariants = preset.showVariants;
-            ResetRows(GetCurrentObjects());
-            ResetColumns(preset.visibleColumnDefNames);
-            RestoreSort(sortColumnDefName, sortDirection);
-            SortRows();
-            ApplyFilters();
-        }
-        else
-        {
-            ApplyVisibleColumns(preset.visibleColumnDefNames);
+            return;
         }
 
-        ApplyFilterPresetStates(preset.filterStates);
+        List<TableFilterState> filterStates = preset.filterStates
+            .Select(state => new TableFilterState(state.columnDefName, state.filterId, state.label, state.state))
+            .ToList();
+        TableConfiguration current = _tableSession.Current;
+        QueueCurrentConfiguration(TableIntent.ApplyConfiguration(TableConfiguration.ForPreset(
+            preset.visibleColumnDefNames,
+            filterStates,
+            showVariants: SupportsVariants ? preset.showVariants : current.ShowVariants,
+            expandMultiValueCells: preset.expandMultiValueCells,
+            quality: current.Quality,
+            sortColumnDefName: current.SortColumnDefName ?? _sortColumn?.Def.defName,
+            sortDirection: current.SortDirection)));
     }
 
     private void DeletePreset(TablePreset preset)

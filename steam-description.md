@@ -50,12 +50,9 @@ Compared with the original, Stats Forked adds inventory and recipe filters, save
 [h1]Credits[/h1]
 Original Stats project by AzkiyOne. Stats Forked is maintained by KyleMHB. Harmony is maintained by the Harmony and RimWorld modding community.
 
-[h1]License and Forking Policy[/h1]
+[h1]License[/h1]
 This project inherits the original Stats licensing terms. The repository includes GNU GPLv3 and LGPLv3 license files; consult those files for the applicable terms.
 
-If your fork primarily consists of bug fixes or feature additions that align with the core vision of this mod, I reserve the right to request that your changes be submitted as a Pull Request to my existing codebase rather than being published as a completely separate standalone release.
-
-This is a project request, not an additional license restriction.
 
 [h1]Links[/h1]
 Support me on Ko-fi. This does not imply endorsement by the original authors.

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using RimWorld;
@@ -29,6 +30,7 @@ public sealed class LabelColumnWorker(ColumnDef columnDef) : ColumnWorker<DefBas
     public override ColumnType Type => ColumnType.String;
     public override ColumnDef Def => columnDef;
     public override bool ShouldDrawCellsNow => Event.current.type == EventType.Repaint || Event.current.IsLeftMouseInteraction();
+    private Action? _researchCompletedHandler;
 
     protected override LabelCell MakeCell(DefBasedObject @object)
     {
@@ -42,6 +44,12 @@ public sealed class LabelColumnWorker(ColumnDef columnDef) : ColumnWorker<DefBas
 
     public override ICollection<CellField> GetCellFields(TableWorker tableWorker)
     {
+        if (_researchCompletedHandler != null)
+        {
+            Events.ResearchCompleted -= _researchCompletedHandler;
+            _researchCompletedHandler = null;
+        }
+
         Filter textFieldFilter = new StringFilter((int row) => this[row].Text ?? "");
         int CompareText(int row1, int row2) => Comparer<string?>.Default.Compare(this[row1].Text, this[row2].Text);
         CellField textField = new(Def.TitleWidget, textFieldFilter, CompareText);
@@ -54,13 +62,14 @@ public sealed class LabelColumnWorker(ColumnDef columnDef) : ColumnWorker<DefBas
                 new(ResearchStatus.NoResearchRequired, Localization.Get(Localization.NoResearchRequired)),
             ]
         );
-        Events.ResearchCompleted += () =>
+        _researchCompletedHandler = () =>
         {
             if (researchStatusFilter.IsActive)
             {
                 researchStatusFilter.NotifyChanged();
             }
         };
+        Events.ResearchCompleted += _researchCompletedHandler;
         CellField researchStatusField = new(
             new Label(Localization.Get(Localization.ResearchStatus)),
             researchStatusFilter,
@@ -68,6 +77,17 @@ public sealed class LabelColumnWorker(ColumnDef columnDef) : ColumnWorker<DefBas
         );
 
         return [textField, researchStatusField];
+    }
+
+    public override void Dispose()
+    {
+        if (_researchCompletedHandler == null)
+        {
+            return;
+        }
+
+        Events.ResearchCompleted -= _researchCompletedHandler;
+        _researchCompletedHandler = null;
     }
 
     private static ResearchStatus GetResearchStatus(Verse.ThingDef? thingDef)
